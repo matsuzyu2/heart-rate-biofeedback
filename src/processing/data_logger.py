@@ -34,7 +34,9 @@ class DataLogger:
         ファイルが存在しない場合のみヘッダーを追加
         """
         # ディレクトリが存在しない場合は作成
-        os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
+        dir_path = os.path.dirname(self.file_path)
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
         
         # ファイルが存在しない場合のみヘッダーを追加
         if not os.path.exists(self.file_path):
