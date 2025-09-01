@@ -27,3 +27,11 @@ Thumbs.db
 # Project specific
 *.log
 session_data/
+
+# Logs directory contents (but keep the directory structure)
+logs/*.csv
+logs/*.txt
+logs/*.json
+# Keep logs directory but ignore all log files
+logs/*
+!logs/.gitkeep

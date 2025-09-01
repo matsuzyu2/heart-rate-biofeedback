@@ -7,11 +7,12 @@
 - YAGNI原則: 現在必要な機能のみを実装（最小限）
 """
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from ..sensor.polar_interface import PolarInterface
 from ..processing.heart_rate_processor import HeartRateProcessor
 from ..feedback.feedback_modes import FeedbackMode
+from .heart_rate_session_logger import HeartRateSessionLogger
 
 # ログ設定
 logger = logging.getLogger(__name__)
@@ -27,16 +28,27 @@ class SessionController:
     - 心拍データからフィードバックへのデータフロー
     """
     
-    def __init__(self, feedback_mode: FeedbackMode, device_id: Optional[str] = None):
+    def __init__(self, feedback_mode: FeedbackMode, device_id: Optional[str] = None,
+                 enable_logging: bool = True, log_output_dir: Optional[str] = None,
+                 session_info: Optional[Dict[str, str]] = None):
         """
         SessionControllerの初期化
         
         Args:
             feedback_mode: フィードバックモードインスタンス
             device_id: Polarデバイス ID、Noneの場合は自動検出
+            enable_logging: ログ機能を有効にするかどうか（デフォルト: True）
+            log_output_dir: ログファイルの出力ディレクトリ（デフォルト: ./logs）
+            session_info: セッション情報（後方互換性のため保持）
         """
         self.feedback_mode = feedback_mode
         self.device_id = device_id
+        
+        # ログ機能の設定（デフォルトで有効）
+        self.enable_logging = enable_logging
+        self.log_output_dir = log_output_dir or "./logs"  # デフォルト出力先
+        self.session_info = session_info or {}
+        self.heart_rate_logger: Optional[HeartRateSessionLogger] = None
         
         # セッション状態（単純なフラグ）
         self.is_running = False
@@ -60,6 +72,10 @@ class SessionController:
         
         logger.info("Starting session...")
         
+        # ログ機能のセットアップ
+        if self.enable_logging:
+            self._setup_logging()
+        
         # コンポーネントの初期化
         if not await self._initialize_components():
             return False
@@ -77,6 +93,11 @@ class SessionController:
             return
         
         logger.info("Stopping session...")
+        
+        # ログ機能の終了
+        if self.heart_rate_logger:
+            self.heart_rate_logger.end_session()
+            self.heart_rate_logger = None
         
         # コンポーネントのクリーンアップ
         await self._cleanup_components()
@@ -148,6 +169,10 @@ class SessionController:
                 logger.warning("Invalid heart rate data received")
                 return
             
+            # ログ機能: 心拍データをCSVファイルに保存
+            if self.heart_rate_logger:
+                self.heart_rate_logger.log_heart_rate(heart_rate_data)
+            
             # データ処理
             if self.heart_rate_processor:
                 self.heart_rate_processor.add_heart_rate(heart_rate)
@@ -162,3 +187,23 @@ class SessionController:
             
         except Exception as e:
             logger.error(f"Error processing heart rate data: {e}")
+    
+    def _setup_logging(self) -> None:
+        """
+        ログ機能のセットアップ
+        デフォルトで./logsディレクトリに自動保存
+        """
+        if not self.enable_logging:
+            return
+        
+        try:
+            self.heart_rate_logger = HeartRateSessionLogger(
+                output_dir=self.log_output_dir,
+                session_info=self.session_info  # 後方互換性のため保持
+            )
+            self.heart_rate_logger.start_session()
+            logger.info(f"Logging enabled: {self.heart_rate_logger.get_filename()}")
+            
+        except Exception as e:
+            logger.error(f"Failed to setup logging: {e}")
+            self.heart_rate_logger = None

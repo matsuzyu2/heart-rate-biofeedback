@@ -1,0 +1,6 @@
+# このファイルは logs ディレクトリをGitリポジトリに含めるために存在します
+# 実際のログファイル（.csv, .txt, .json等）は .gitignore により追跡対象外です
+
+# ログファイルの保存先
+# - 心拍データ: YYYYMMDD_HHMMSS_session_XXX.csv
+# - 実験ログ: 必要に応じて追加
