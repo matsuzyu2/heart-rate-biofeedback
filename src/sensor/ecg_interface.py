@@ -171,7 +171,7 @@ class ECGInterface:
         """ECGデータの通知を処理（polar_h10_get_ecg.py仕様準拠）"""
         try:
             # ECGデータ解析（PMD仕様準拠）
-            ecg_result = self.data_processor.parse_ecg_data(data)
+            ecg_result = self.data_formatter.parse_ecg_data(data)
             
             # データをリストに蓄積
             ecg_samples = ecg_result['ecg_samples']
