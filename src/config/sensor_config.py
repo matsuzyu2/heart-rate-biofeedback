@@ -1,9 +1,9 @@
 # センサー設定ファイル
-# YAGNI原則: 現在必要な設定のみを定義
 
 # Polarデバイス設定
-POLAR_DEVICE_ID = "EBC5752E"  # デフォルトのPolarデバイスID
+POLAR_DEVICE_ID = "D9DB7D2A"  # PolarデバイスIDを登録
 
-# 将来的に必要になった場合の拡張用（現在は使用しない）
-# POLAR_SCAN_TIMEOUT = 10.0     # スキャンタイムアウト（秒）
-# POLAR_CONNECTION_TIMEOUT = 5.0  # 接続タイムアウト（秒）
+# ECG高頻度データ取得設定
+ECG_TARGET_FREQUENCY = 200  # Hz（Polar H10最大仕様）
+ECG_R_WAVE_THRESHOLD = 0.5 # R波検出閾値（正規化値）
+
