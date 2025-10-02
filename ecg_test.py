@@ -9,7 +9,8 @@ import logging
 # ECG関連モジュールのインポート
 from src.sensor.ecg_interface import ECGInterface
 from src.processing.ecg_processor import ECGProcessor
-from src.processing.ecg_logger import ECGLogger, create_ecg_log_filename
+from src.processing.ecg_logger import ECGLogger, create_ecg_log_filename, BeatEventLogger, create_beat_log_filename
+from src.processing.instantaneous_hr_logger import InstantaneousHRLogger, create_instantaneous_hr_log_filename
 
 # ログ設定
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
@@ -26,6 +27,8 @@ class ECGTestRunner:
         self.ecg_interface = ECGInterface()
         self.ecg_processor = ECGProcessor()
         self.ecg_logger = None
+        self.beat_logger = None
+        self.instantaneous_hr_logger = None
     
     def on_ecg_data_received(self, ecg_data):
         """
@@ -49,9 +52,23 @@ class ECGTestRunner:
         
         try:
             
-            log_path = create_ecg_log_filename("test")
+            log_path = create_ecg_log_filename("ecg_session")
             self.ecg_logger = ECGLogger(log_path)
             logger.info(f"Log file: {log_path}")
+            
+            # BeatEventLoggerの初期化
+            beat_log_path = create_beat_log_filename("beat_session")
+            self.beat_logger = BeatEventLogger(beat_log_path)
+            logger.info(f"Beat log file: {beat_log_path}")
+            
+            # InstantaneousHRLoggerの初期化
+            instantaneous_hr_log_path = create_instantaneous_hr_log_filename("instantaneous_hr_session")
+            self.instantaneous_hr_logger = InstantaneousHRLogger(instantaneous_hr_log_path)
+            logger.info(f"Instantaneous HR log file: {instantaneous_hr_log_path}")
+            
+            # ECGProcessorにロガーを設定
+            self.ecg_processor.set_beat_logger(self.beat_logger)
+            self.ecg_processor.set_instantaneous_hr_logger(self.instantaneous_hr_logger)
             
             # ECGインターフェース設定
             self.ecg_interface.set_ecg_callback(self.on_ecg_data_received)

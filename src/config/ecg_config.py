@@ -14,3 +14,12 @@ ECG_TIMEOUT_SECONDS = 30
 
 # データ記録設定
 ECG_LOG_DIRECTORY = "logs/ecg"
+BEAT_LOG_DIRECTORY = "logs/beat"
+INSTANTANEOUS_HR_LOG_DIRECTORY = "logs/instantaneous_hr"
+
+# 心拍数解析設定
+HR_TREND_THRESHOLD_BPM = 1.0  # トレンド判定の閾値（BPM）
+HR_BLOCK_WINDOW_SECONDS = 5.0  # ブロック平均の時間窓（秒）
+
+# 過渡応答除外設定
+TRANSITION_PERIOD_SECONDS = 5.0  # Polarセンサー装着時の過渡応答期間（秒）
