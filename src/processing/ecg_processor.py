@@ -1,11 +1,16 @@
 # ECG専用データ処理・解析
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional, Callable, Tuple
 import logging
 
 # R波検出器をインポート
-from .r_peak_detector import RPeakDetector, BeatEvent
+from .simple_r_peak_detector import SimpleRPeakDetector, BeatEvent
+# 瞬間心拍数算出クラスをインポート
+from .instantaneous_heart_rate import InstantaneousHeartRate, TrendType
+# ロガークラスをインポート
+from .ecg_logger import BeatEventLogger
+from .instantaneous_hr_logger import InstantaneousHRLogger
 # ECG設定をインポート
-from ..config.ecg_config import ECG_SAMPLING_RATE
+from ..config.ecg_config import ECG_SAMPLING_RATE, HR_BLOCK_WINDOW_SECONDS
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
@@ -61,8 +66,64 @@ class ECGProcessor:
         
         # R波検出器の初期化
         self.sampling_rate = sampling_rate or ECG_SAMPLING_RATE
-        self.r_peak_detector = RPeakDetector(self.sampling_rate)
+        self.r_peak_detector = SimpleRPeakDetector(self.sampling_rate)
+        
+        # 瞬間心拍数算出器の初期化
+        self.instantaneous_hr = InstantaneousHeartRate()
+        
         self.beat_callback: Optional[Callable[[BeatEvent], None]] = None
+        
+        # ロガーの初期化（オプション）
+        self.beat_logger: Optional[BeatEventLogger] = None
+        self.instantaneous_hr_logger: Optional[InstantaneousHRLogger] = None
+        
+        # R波検出時の内部コールバックを設定
+        self.r_peak_detector.set_beat_callback(self._on_beat_detected)
+    
+    def _on_beat_detected(self, beat_event: BeatEvent) -> None:
+        """
+        R波検出時の内部コールバック処理
+        
+        Args:
+            beat_event (BeatEvent): 検出されたR波イベント
+        """
+        # InstantaneousHeartRateにビートイベントを送信
+        self.instantaneous_hr.add_beat_event(beat_event)
+        
+        # BeatEventLoggerがあればロギング処理を実行
+        if self.beat_logger:
+            try:
+                # BeatEventを辞書形式に変換してロギング
+                beat_data = {
+                    "timestamp_ns": beat_event.timestamp_ns,
+                    "sample_index": beat_event.sample_index,
+                    "amplitude": beat_event.amplitude,
+                    "rr_interval_ms": beat_event.rr_interval_ms
+                }
+                self.beat_logger.log_beat(beat_data)
+            except Exception as e:
+                logger.error(f"Beat event logging failed: {e}")
+        
+        # InstantaneousHRLoggerがあれば瞬間心拍数をロギング
+        # RR間隔が有効な場合のみログ出力（最初のビートはスキップ）
+        if self.instantaneous_hr_logger and beat_event.rr_interval_ms is not None:
+            try:
+                # 瞬間心拍数を計算
+                instantaneous_hr_bpm = 60000.0 / beat_event.rr_interval_ms
+                
+                # 瞬間心拍数データを辞書形式に変換してロギング
+                instantaneous_hr_data = {
+                    "timestamp_ns": beat_event.timestamp_ns,
+                    "rr_interval_ms": beat_event.rr_interval_ms,
+                    "instantaneous_hr_bpm": instantaneous_hr_bpm
+                }
+                self.instantaneous_hr_logger.log_instantaneous_hr(instantaneous_hr_data)
+            except Exception as e:
+                logger.error(f"Instantaneous HR logging failed: {e}")
+        
+        # 外部コールバックがあれば実行
+        if self.beat_callback:
+            self.beat_callback(beat_event)
     
     def set_beat_callback(self, callback: Callable[[BeatEvent], None]):
         """
@@ -72,7 +133,24 @@ class ECGProcessor:
             callback: R波検出時に呼び出される関数
         """
         self.beat_callback = callback
-        self.r_peak_detector.set_beat_callback(callback)
+    
+    def set_beat_logger(self, beat_logger: BeatEventLogger):
+        """
+        BeatEventLoggerを設定
+        
+        Args:
+            beat_logger: BeatEventデータをロギングするLogger
+        """
+        self.beat_logger = beat_logger
+    
+    def set_instantaneous_hr_logger(self, instantaneous_hr_logger: InstantaneousHRLogger):
+        """
+        InstantaneousHRLoggerを設定
+        
+        Args:
+            instantaneous_hr_logger: 瞬間心拍数データをロギングするLogger
+        """
+        self.instantaneous_hr_logger = instantaneous_hr_logger
     
     def add_ecg_data(self, ecg_data):
         """
@@ -163,17 +241,77 @@ class ECGProcessor:
         
         return summary
     
-    def get_heart_rate_bpm(self, window_duration_ms: int = 10000) -> Optional[float]:
+    def get_heart_rate_bpm(self, window_duration_ms: Optional[int] = None) -> Optional[float]:
         """
-        現在の心拍数を取得
+        現在の心拍数を取得（InstantaneousHeartRateベース）
         
         Args:
-            window_duration_ms: 計算窓の時間幅（ミリ秒）
+            window_duration_ms (Optional[int]): 計算窓の時間幅（ミリ秒）、Noneの場合は設定ファイルから取得
             
         Returns:
             Optional[float]: 心拍数（BPM）、計算できない場合はNone
         """
-        return self.r_peak_detector.get_heart_rate_bpm(window_duration_ms)
+        # 時間窓を決定（設定ファイルからデフォルト値を取得）
+        if window_duration_ms is None:
+            window_duration_s = HR_BLOCK_WINDOW_SECONDS
+        else:
+            window_duration_s = window_duration_ms / 1000.0
+        
+        # ブロック平均を取得
+        block_averages = self.instantaneous_hr.get_block_averages(window_seconds=window_duration_s)
+        
+        if not block_averages:
+            # フォールバック: 従来のRPeakDetectorを使用
+            fallback_window_ms = window_duration_ms or int(HR_BLOCK_WINDOW_SECONDS * 1000)
+            return self.r_peak_detector.get_heart_rate_bpm(fallback_window_ms)
+        
+        # 最新のブロック平均を返す
+        latest_block = block_averages[-1]
+        return latest_block["average_hr"]
+    
+    def get_heart_rate_trend(self, timestamp_ns: Optional[int] = None) -> TrendType:
+        """
+        心拍数のトレンド判定を取得
+        
+        Args:
+            timestamp_ns (Optional[int]): 基準時刻（ナノ秒）。Noneの場合は最新時刻を使用
+            
+        Returns:
+            TrendType: "increasing", "decreasing", "stable" のいずれか
+        """
+        if timestamp_ns is None:
+            # 最新の時刻を取得
+            time_range = self.instantaneous_hr.get_time_range()
+            if time_range is None:
+                return "stable"
+            timestamp_ns = time_range[1]  # 最新時刻
+        
+        return self.instantaneous_hr.get_trend_at(timestamp_ns)
+    
+    def get_instantaneous_hr_data(self) -> List[Tuple[int, float]]:
+        """
+        瞬間心拍数データを取得
+        
+        Returns:
+            List[Tuple[int, float]]: [(timestamp_ns, hr_bpm), ...] の形式
+        """
+        return self.instantaneous_hr.get_instantaneous_hr()
+    
+    def get_block_averages(self, window_seconds: Optional[float] = None) -> List[Dict[str, any]]:
+        """
+        ブロック平均データを取得
+        
+        Args:
+            window_seconds (Optional[float]): ブロックサイズ（秒）、Noneの場合は設定ファイルから取得
+            
+        Returns:
+            List[Dict]: ブロック平均データ
+        """
+        # ウィンドウサイズを決定（設定ファイルからデフォルト値を取得）
+        if window_seconds is None:
+            window_seconds = HR_BLOCK_WINDOW_SECONDS
+        
+        return self.instantaneous_hr.get_block_averages(window_seconds)
     
     def get_detected_beats(self) -> List[BeatEvent]:
         """
@@ -185,18 +323,20 @@ class ECGProcessor:
         return self.r_peak_detector.detected_peaks
     
     def reset_r_peak_detector(self):
-        """R波検出器の状態をリセット"""
+        """R波検出器と瞬間心拍数算出器の状態をリセット"""
         self.r_peak_detector.reset()
-        logger.info("R-peak detector reset")
+        self.instantaneous_hr.reset()
+        logger.info("R-peak detector and instantaneous heart rate calculator reset")
     
     def clear_data(self):
         """保存されているECGデータをクリア"""
         self.ecg_data_list.clear()
         
-        # R波検出器もリセット
+        # R波検出器と瞬間心拍数算出器もリセット
         self.r_peak_detector.reset()
+        self.instantaneous_hr.reset()
         
-        logger.info("ECG data and R-peak detector cleared")
+        logger.info("ECG data, R-peak detector, and instantaneous heart rate calculator cleared")
 
 
 def main():
@@ -256,6 +396,26 @@ def main():
         print(f"Current heart rate: {heart_rate:.1f} BPM")
     else:
         print("Heart rate calculation not available")
+    
+    # トレンド判定を取得
+    trend = processor.get_heart_rate_trend()
+    print(f"Heart rate trend: {trend}")
+    
+    # 瞬間心拍数データの統計を表示
+    hr_data = processor.get_instantaneous_hr_data()
+    if hr_data:
+        hr_values = [hr for _, hr in hr_data]
+        print(f"Instantaneous HR data points: {len(hr_values)}")
+        print(f"HR range: {min(hr_values):.1f} - {max(hr_values):.1f} BPM")
+    
+    # ブロック平均を表示
+    block_averages = processor.get_block_averages()
+    if block_averages:
+        print(f"Block averages ({len(block_averages)} blocks):")
+        for i, block in enumerate(block_averages):
+            start_s = block["start_ns"] / 1_000_000_000
+            end_s = block["end_ns"] / 1_000_000_000
+            print(f"  Block {i+1}: {start_s:.1f}-{end_s:.1f}s, HR: {block['average_hr']:.1f} BPM")
 
 
 if __name__ == "__main__":

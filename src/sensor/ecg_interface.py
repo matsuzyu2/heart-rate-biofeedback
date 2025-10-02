@@ -9,7 +9,8 @@ from ..config.ecg_config import (
     ECG_SERVICE_UUID,
     ECG_CONTROL_POINT_UUID,
     ECG_DATA_UUID,
-    ECG_TIMEOUT_SECONDS
+    ECG_TIMEOUT_SECONDS,
+    TRANSITION_PERIOD_SECONDS
 )
 
 # ログ設定
@@ -24,7 +25,7 @@ class ECGDataFormatter:
     
     def __init__(self):
         """ECGDataFormatterを初期化"""
-        self.session_start_time_ns = None  # セッション開始時刻（ナノ秒）
+        pass
     
     def convert_array_to_signed_int(self, data, offset, length):
         """バイト配列を符号付き整数に変換"""
@@ -36,25 +37,7 @@ class ECGDataFormatter:
         """バイト配列を符号なし長整数に変換"""
         return int.from_bytes(
             bytearray(data[offset : offset + length]), byteorder="little", signed=False,
-        )
-    
-    def convert_to_relative_time_ns(self, timestamp_ns):
-        """
-        絶対時刻を相対時間に変換
-        
-        Args:
-            timestamp_ns (int): ナノ秒単位の絶対時刻
-            
-        Returns:
-            int: セッション開始からの経過時間（ナノ秒）
-        """
-        if self.session_start_time_ns is None:
-            # 初回データの場合、セッション開始時刻として記録
-            self.session_start_time_ns = timestamp_ns
-            return 0
-
-        relative_time_ns = timestamp_ns - self.session_start_time_ns
-        return relative_time_ns  
+        )  
     
     def parse_ecg_data(self, raw_data):
         """
@@ -67,7 +50,7 @@ class ECGDataFormatter:
             dict: ECGサンプルデータと処理情報を含む辞書
                 {
                     'ecg_samples': list,  # ECGサンプル値のリスト
-                    'timestamps': list,   # 各サンプルのタイムスタンプ（セッション開始からの経過ナノ秒数）
+                    'timestamps': list,   # 各サンプルのタイムスタンプ（絶対時刻ナノ秒数）
                 }
         """
         # 最小ヘッダーサイズ確認
@@ -106,11 +89,8 @@ class ECGDataFormatter:
                     # サンプル時刻計算（130Hzでの各サンプル時刻）
                     current_sample_timestamp_ns = timestamp + (i * 1_000_000_000 // 130)
                     
-                    # 相対時間（ナノ秒）に変換
-                    relative_time_nanoseconds = self.convert_to_relative_time_ns(current_sample_timestamp_ns)
-                    
                     ecg_samples.append(ecg_value)
-                    timestamps.append(relative_time_nanoseconds)
+                    timestamps.append(current_sample_timestamp_ns)
                 
                 return {
                     'ecg_samples': ecg_samples,
@@ -143,6 +123,11 @@ class ECGInterface:
         self.is_streaming = False
         self.ecg_callback = None
 
+        # 過渡応答除外関連
+        self.streaming_start_time_ns = None
+        self.transition_period_seconds = TRANSITION_PERIOD_SECONDS
+        self.transition_period_passed = False  # 過渡応答期間が終了したかのフラグ
+
         self.data_formatter = ECGDataFormatter()
 
     def set_ecg_callback(self, callback):
@@ -167,21 +152,83 @@ class ECGInterface:
         
         return None
     
+    def _filter_transition_data(self, ecg_result):
+        """
+        過渡応答期間のデータをフィルタリング
+        
+        Args:
+            ecg_result (dict): ECGデータ結果
+            
+        Returns:
+            dict or None: フィルタリング後のECGデータ、過渡応答期間中の場合はNone
+        """
+        # 過渡応答期間が既に終了している場合はフィルタリングしない
+        if self.transition_period_passed:
+            return ecg_result
+        
+        # 最初のデータ受信時にストリーミング開始時刻を設定
+        if self.streaming_start_time_ns is None:
+            timestamps = ecg_result.get('timestamps', [])
+            if timestamps:
+                self.streaming_start_time_ns = timestamps[0]
+                logger.info("Set streaming start time for transition filtering")
+        
+        if self.streaming_start_time_ns is None:
+            # タイムスタンプが取得できない場合はデータを破棄
+            return None
+        
+        # パケット内のタイムスタンプをチェック
+        timestamps = ecg_result.get('timestamps', [])
+        ecg_samples = ecg_result.get('ecg_samples', [])
+        
+        if not timestamps or not ecg_samples:
+            return None
+        
+        # 過渡応答期間を超えたサンプルのインデックスを見つける
+        valid_indices = []
+        for i, timestamp_ns in enumerate(timestamps):
+            elapsed_seconds = (timestamp_ns - self.streaming_start_time_ns) / 1_000_000_000
+            if elapsed_seconds >= self.transition_period_seconds:
+                valid_indices.append(i)
+        
+        # 有効なサンプルがない場合
+        if not valid_indices:
+            return None
+        
+        # 有効なサンプルがある場合
+        if valid_indices:
+            # 部分的にフィルタリング
+            filtered_samples = [ecg_samples[i] for i in valid_indices]
+            filtered_timestamps = [timestamps[i] for i in valid_indices]
+            
+            self.transition_period_passed = True  # 過渡応答期間終了
+            logger.info("Transition period completed - no more filtering needed")
+            
+            return {
+                'ecg_samples': filtered_samples,
+                'timestamps': filtered_timestamps
+            }
+    
     async def ecg_notification_handler(self, sender, data):
         """ECGデータの通知を処理（polar_h10_get_ecg.py仕様準拠）"""
         try:
             # ECGデータ解析（PMD仕様準拠）
             ecg_result = self.data_formatter.parse_ecg_data(data)
             
+            # 過渡応答期間のデータをフィルタリング
+            filtered_result = self._filter_transition_data(ecg_result)
+            if filtered_result is None:
+                return
+            
             # データをリストに蓄積
-            ecg_samples = ecg_result['ecg_samples']
-            timestamps = ecg_result['timestamps']
+            ecg_samples = filtered_result['ecg_samples']
+            timestamps = filtered_result['timestamps']
             
             ecg_samples_count = len(ecg_samples)
             logger.info(f"Processed {ecg_samples_count} ECG samples from packet (frame_type=0)")
             
             if self.ecg_callback:
-                self.ecg_callback(ecg_result)
+                self.ecg_callback(filtered_result)
                 
         except Exception as e:
             logger.error(f"Error processing ECG data: {e}")
@@ -232,6 +279,10 @@ class ECGInterface:
             # ECGストリーミング開始コマンドを送信
             start_command = bytearray([0x02, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00])
             await self.client.write_gatt_char(ECG_CONTROL_POINT_UUID, start_command)
+            
+            # ストリーミング開始時刻は最初のデータ受信時に設定
+            self.streaming_start_time_ns = None
+            self.transition_period_passed = False  # フラグをリセット
             
             self.is_streaming = True
             logger.info("ECG streaming started")
