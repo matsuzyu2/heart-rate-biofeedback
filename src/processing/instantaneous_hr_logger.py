@@ -3,7 +3,7 @@ InstantaneousHRLoggerクラス - 瞬間心拍数データのCSV保存機能
 """
 import csv
 import os
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from datetime import datetime
 
 from ..config.ecg_config import INSTANTANEOUS_HR_LOG_DIRECTORY
@@ -15,21 +15,32 @@ class InstantaneousHRLogger:
     
     既存のECGLogger、BeatEventLoggerと同じ設計パターンを踏襲し、
     単一責任原則に基づいてロギング機能のみを担当します。
+    
+    使用方法:
+w       logger = InstantaneousHRLogger()  # ecg_config.INSTANTANEOUS_HR_LOG_DIRECTORYを使用
+       logger.start_session()
+       logger.log_instantaneous_hr(hr_data)
+       logger.end_session()
+    
+    Note:
+        保存先ディレクトリはecg_config.INSTANTANEOUS_HR_LOG_DIRECTORYで設定されます。
+        セッション管理パターンのみをサポートし、シンプルで一貫した使用方法を提供します。
     """
     
     # CSVカラム定義（将来的な拡張に備えてクラス定数として定義）
     COLUMNS = ['id', 'timestamp_ns', 'rr_interval_ms', 'instantaneous_hr_bpm']
     
-    def __init__(self, file_path: str):
+    def __init__(self):
         """
         InstantaneousHRLoggerを初期化
         
-        Args:
-            file_path (str): 保存先CSVファイルのパス
+        Note:
+            出力ディレクトリはecg_config.INSTANTANEOUS_HR_LOG_DIRECTORYから自動的に取得されます。
         """
-        self.file_path = file_path
+        self.output_dir = INSTANTANEOUS_HR_LOG_DIRECTORY
+        self.file_path: Optional[str] = None
         self._record_id = 0  # 連番IDカウンタ（1から始まる）
-        self._initialize_csv_file()
+        self._session_started = False
     
     def _initialize_csv_file(self):
         """
@@ -46,6 +57,59 @@ class InstantaneousHRLogger:
                 writer = csv.writer(f)
                 # 瞬間心拍数データ用ヘッダー
                 writer.writerow(self.COLUMNS)
+    
+    def start_session(self) -> str:
+        """
+        セッションを開始し、タイムスタンプ付きファイル名を生成
+        
+        Returns:
+            str: 生成されたファイルパス
+            
+        Raises:
+            RuntimeError: セッションが既に開始されている場合
+        """
+        if self._session_started:
+            raise RuntimeError("Session already started")
+        
+        # タイムスタンプ付きファイル名を生成
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{timestamp}_instantaneous_hr_session.csv"
+        self.file_path = os.path.join(self.output_dir, filename)
+        
+        # CSVファイルを初期化
+        self._initialize_csv_file()
+        self._session_started = True
+        
+        return self.file_path
+    
+    def end_session(self) -> None:
+        """
+        セッションを終了
+        
+        Note:
+            現在は特別な処理はありませんが、将来的な拡張のために用意
+            （例: バッファのフラッシュ、統計情報の出力など）
+        """
+        if not self._session_started:
+            return
+        
+        self._session_started = False
+        self._record_id = 0  # IDカウンタをリセット
+        # 将来的にクリーンアップ処理を追加する場合はここに記述
+    
+    def get_filename(self) -> str:
+        """
+        現在のログファイル名を取得
+        
+        Returns:
+            str: ログファイルのパス
+            
+        Raises:
+            RuntimeError: セッションが開始されていない場合
+        """
+        if self.file_path is None:
+            raise RuntimeError("Session not started. Call start_session() first.")
+        return self.file_path
     
     def log_instantaneous_hr(self, instantaneous_hr_data: Dict[str, Any]):
         """
@@ -108,9 +172,9 @@ def create_instantaneous_hr_log_filename(base_name: str = "instantaneous_hr_sess
 
 def main():
     """InstantaneousHRLoggerのテスト用メイン処理"""
-    # テスト用ログファイル作成
-    test_log_path = create_instantaneous_hr_log_filename("test")
-    logger = InstantaneousHRLogger(test_log_path)
+    # InstantaneousHRLoggerのテスト
+    logger = InstantaneousHRLogger()
+    logger.start_session()
     
     # テスト用瞬間心拍数データ
     test_data_list = [
@@ -135,8 +199,10 @@ def main():
     for data in test_data_list:
         logger.log_instantaneous_hr(data)
     
-    print(f"Instantaneous HR data logged to: {logger.file_path}")
+    print(f"Instantaneous HR data logged to: {logger.get_filename()}")
     print(f"Total records: {logger._record_id}")
+    
+    logger.end_session()
 
 
 if __name__ == "__main__":

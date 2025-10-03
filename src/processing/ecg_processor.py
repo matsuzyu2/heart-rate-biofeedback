@@ -71,11 +71,8 @@ class ECGProcessor:
         # 瞬間心拍数算出器の初期化
         self.instantaneous_hr = InstantaneousHeartRate()
         
+        # 外部コールバック（セッションコントローラー用）
         self.beat_callback: Optional[Callable[[BeatEvent], None]] = None
-        
-        # ロガーの初期化（オプション）
-        self.beat_logger: Optional[BeatEventLogger] = None
-        self.instantaneous_hr_logger: Optional[InstantaneousHRLogger] = None
         
         # R波検出時の内部コールバックを設定
         self.r_peak_detector.set_beat_callback(self._on_beat_detected)
@@ -90,67 +87,18 @@ class ECGProcessor:
         # InstantaneousHeartRateにビートイベントを送信
         self.instantaneous_hr.add_beat_event(beat_event)
         
-        # BeatEventLoggerがあればロギング処理を実行
-        if self.beat_logger:
-            try:
-                # BeatEventを辞書形式に変換してロギング
-                beat_data = {
-                    "timestamp_ns": beat_event.timestamp_ns,
-                    "sample_index": beat_event.sample_index,
-                    "amplitude": beat_event.amplitude,
-                    "rr_interval_ms": beat_event.rr_interval_ms
-                }
-                self.beat_logger.log_beat(beat_data)
-            except Exception as e:
-                logger.error(f"Beat event logging failed: {e}")
-        
-        # InstantaneousHRLoggerがあれば瞬間心拍数をロギング
-        # RR間隔が有効な場合のみログ出力（最初のビートはスキップ）
-        if self.instantaneous_hr_logger and beat_event.rr_interval_ms is not None:
-            try:
-                # 瞬間心拍数を計算
-                instantaneous_hr_bpm = 60000.0 / beat_event.rr_interval_ms
-                
-                # 瞬間心拍数データを辞書形式に変換してロギング
-                instantaneous_hr_data = {
-                    "timestamp_ns": beat_event.timestamp_ns,
-                    "rr_interval_ms": beat_event.rr_interval_ms,
-                    "instantaneous_hr_bpm": instantaneous_hr_bpm
-                }
-                self.instantaneous_hr_logger.log_instantaneous_hr(instantaneous_hr_data)
-            except Exception as e:
-                logger.error(f"Instantaneous HR logging failed: {e}")
-        
-        # 外部コールバックがあれば実行
+        # 外部コールバックがあれば実行（セッションコントローラーへの通知）
         if self.beat_callback:
             self.beat_callback(beat_event)
     
-    def set_beat_callback(self, callback: Callable[[BeatEvent], None]):
+    def set_beat_callback(self, callback: Callable[[BeatEvent], None]) -> None:
         """
-        R波検出時のコールバック関数を設定
+        R波検出時の外部コールバック関数を設定
         
         Args:
             callback: R波検出時に呼び出される関数
         """
         self.beat_callback = callback
-    
-    def set_beat_logger(self, beat_logger: BeatEventLogger):
-        """
-        BeatEventLoggerを設定
-        
-        Args:
-            beat_logger: BeatEventデータをロギングするLogger
-        """
-        self.beat_logger = beat_logger
-    
-    def set_instantaneous_hr_logger(self, instantaneous_hr_logger: InstantaneousHRLogger):
-        """
-        InstantaneousHRLoggerを設定
-        
-        Args:
-            instantaneous_hr_logger: 瞬間心拍数データをロギングするLogger
-        """
-        self.instantaneous_hr_logger = instantaneous_hr_logger
     
     def add_ecg_data(self, ecg_data):
         """
@@ -271,7 +219,7 @@ class ECGProcessor:
     
     def get_heart_rate_trend(self, timestamp_ns: Optional[int] = None) -> TrendType:
         """
-        心拍数のトレンド判定を取得
+        心拍数のトレンド判定を取得（リアルタイム対応）
         
         Args:
             timestamp_ns (Optional[int]): 基準時刻（ナノ秒）。Noneの場合は最新時刻を使用
@@ -286,7 +234,8 @@ class ECGProcessor:
                 return "stable"
             timestamp_ns = time_range[1]  # 最新時刻
         
-        return self.instantaneous_hr.get_trend_at(timestamp_ns)
+        # リアルタイム用のトレンド判定を使用
+        return self.instantaneous_hr.get_realtime_trend(timestamp_ns)
     
     def get_instantaneous_hr_data(self) -> List[Tuple[int, float]]:
         """

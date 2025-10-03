@@ -128,21 +128,20 @@ class InstantaneousHeartRate:
         
         return block_averages
     
-    def get_trend_at(
+    def get_realtime_trend(
         self, 
-        timestamp_ns: int, 
-        pre_window_s: Optional[float] = None,
-        post_window_s: Optional[float] = None,
+        current_timestamp_ns: int,
+        window_seconds: Optional[float] = None,
         threshold_bpm: Optional[float] = None
     ) -> TrendType:
         """
-        指定時刻でのトレンド判定を実行
+        リアルタイム用のトレンド判定
+        過去の2つの時間窓を比較
         
         Args:
-            timestamp_ns (int): 基準時刻（ナノ秒）
-            pre_window_s (Optional[float]): 前ウィンドウの長さ（秒）、Noneの場合は設定ファイルから取得
-            post_window_s (Optional[float]): 後ウィンドウの長さ（秒）、Noneの場合は設定ファイルから取得
-            threshold_bpm (Optional[float]): 閾値（BPM）、Noneの場合はインスタンス設定を使用
+            current_timestamp_ns: 現在時刻（ナノ秒）
+            window_seconds: 比較ウィンドウのサイズ（秒）、Noneの場合は設定から取得（デフォルト: 5秒）
+            threshold_bpm: 閾値（BPM）、Noneの場合はインスタンス設定を使用
             
         Returns:
             TrendType: "increasing", "decreasing", "stable" のいずれか
@@ -150,41 +149,36 @@ class InstantaneousHeartRate:
         if threshold_bpm is None:
             threshold_bpm = self.trend_threshold_bpm
         
-        # ウィンドウサイズの決定（設定ファイルからデフォルト値を取得）
-        if pre_window_s is None:
-            pre_window_s = HR_BLOCK_WINDOW_SECONDS
-        if post_window_s is None:
-            post_window_s = HR_BLOCK_WINDOW_SECONDS
+        if window_seconds is None:
+            window_seconds = HR_BLOCK_WINDOW_SECONDS  # デフォルト: 5秒
         
-        # ナノ秒単位に変換
-        pre_window_ns = int(pre_window_s * 1_000_000_000)
-        post_window_ns = int(post_window_s * 1_000_000_000)
+        window_ns = int(window_seconds * 1_000_000_000)
         
-        # 前ウィンドウのデータ: (timestamp_ns - pre_window_ns, timestamp_ns]
-        pre_window_start = timestamp_ns - pre_window_ns
-        pre_data = [
+        # 最近のウィンドウ: (current - window, current]
+        recent_start = current_timestamp_ns - window_ns
+        recent_data = [
             hr for ts, hr in self._instantaneous_hr_data
-            if pre_window_start < ts <= timestamp_ns
+            if recent_start < ts <= current_timestamp_ns
         ]
         
-        # 後ウィンドウのデータ: (timestamp_ns, timestamp_ns + post_window_ns]
-        post_window_end = timestamp_ns + post_window_ns
-        post_data = [
+        # 古いウィンドウ: (current - 2*window, current - window]
+        older_start = current_timestamp_ns - 2 * window_ns
+        older_end = recent_start
+        older_data = [
             hr for ts, hr in self._instantaneous_hr_data
-            if timestamp_ns < ts <= post_window_end
+            if older_start < ts <= older_end
         ]
         
         # データが不十分な場合はstableを返す
-        if not pre_data or not post_data:
-            logger.info(f"Insufficient data for trend analysis at {timestamp_ns}ns")
+        if not recent_data or not older_data:
             return "stable"
         
         # 各ウィンドウの平均を計算
-        pre_average = np.mean(pre_data)
-        post_average = np.mean(post_data)
+        recent_avg = np.mean(recent_data)
+        older_avg = np.mean(older_data)
         
         # トレンド判定
-        difference = post_average - pre_average
+        difference = recent_avg - older_avg
         
         if difference >= threshold_bpm:
             return "increasing"
@@ -193,6 +187,7 @@ class InstantaneousHeartRate:
         else:
             return "stable"
     
+
     def reset(self) -> None:
         """
         すべてのデータをクリアして初期状態に戻す
