@@ -3,7 +3,7 @@ ECGLoggerクラス - ECGデータのCSV保存機能
 """
 import csv
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 from ..config.ecg_config import ECG_LOG_DIRECTORY, BEAT_LOG_DIRECTORY
@@ -12,17 +12,80 @@ from ..config.ecg_config import ECG_LOG_DIRECTORY, BEAT_LOG_DIRECTORY
 class ECGLogger:
     """
     ECGデータをCSVファイルに保存するクラス
+    
+    使用方法:
+       logger = ECGLogger()  # ecg_config.ECG_LOG_DIRECTORYを使用
+       logger.start_session()
+       logger.log_ecg(ecg_data)
+       logger.end_session()
+    
+    Note:
+        保存先ディレクトリはecg_config.ECG_LOG_DIRECTORYで設定されます。
+        セッション管理パターンのみをサポートし、シンプルで一貫した使用方法を提供します。
     """
     
-    def __init__(self, file_path: str):
+    def __init__(self):
         """
         ECGLoggerを初期化
         
-        Args:
-            file_path (str): 保存先CSVファイルのパス
+        Note:
+            出力ディレクトリはecg_config.ECG_LOG_DIRECTORYから自動的に取得されます。
         """
-        self.file_path = file_path
+        self.output_dir = ECG_LOG_DIRECTORY
+        self.file_path: Optional[str] = None
+        self._session_started = False
+    
+    def start_session(self) -> str:
+        """
+        セッションを開始し、タイムスタンプ付きファイル名を生成
+        
+        Returns:
+            str: 生成されたファイルパス
+            
+        Raises:
+            RuntimeError: セッションが既に開始されている場合
+        """
+        if self._session_started:
+            raise RuntimeError("Session already started")
+        
+        # タイムスタンプ付きファイル名を生成
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{timestamp}_ecg_session.csv"
+        self.file_path = os.path.join(self.output_dir, filename)
+        
+        # CSVファイルを初期化
         self._initialize_csv_file()
+        self._session_started = True
+        
+        return self.file_path
+    
+    def end_session(self) -> None:
+        """
+        セッションを終了
+        
+        Note:
+            現在は特別な処理はありませんが、将来的な拡張のために用意
+            （例: バッファのフラッシュ、統計情報の出力など）
+        """
+        if not self._session_started:
+            return
+        
+        self._session_started = False
+        # 将来的にクリーンアップ処理を追加する場合はここに記述
+    
+    def get_filename(self) -> str:
+        """
+        現在のログファイル名を取得
+        
+        Returns:
+            str: ログファイルのパス
+            
+        Raises:
+            RuntimeError: セッションが開始されていない場合
+        """
+        if self.file_path is None:
+            raise RuntimeError("Session not started. Call start_session() first.")
+        return self.file_path
     
     def _initialize_csv_file(self):
         """
@@ -86,25 +149,49 @@ class ECGLogger:
         """
         for ecg_data in ecg_data_list:
             self.log_ecg_data(ecg_data)
+    
+    def log_ecg(self, ecg_data: Dict[str, Any]):
+        """
+        ECGデータをCSVファイルに追記保存（log_ecg_dataのエイリアス）
+        
+        Args:
+            ecg_data (Dict[str, Any]): ECGデータ
+                必須フィールド: 'ecg_samples', 'timestamps'
+        
+        Note:
+            ecg_session_controller.pyとの互換性のために追加されたエイリアスメソッド
+        """
+        self.log_ecg_data(ecg_data)
 
 
 class BeatEventLogger:
     """
     BeatEventデータをCSVファイルに保存するクラス
+    
+    使用方法:
+       logger = BeatEventLogger()  # ecg_config.BEAT_LOG_DIRECTORYを使用
+       logger.start_session()
+       logger.log_beat(beat_data)
+       logger.end_session()
+    
+    Note:
+        保存先ディレクトリはecg_config.BEAT_LOG_DIRECTORYで設定されます。
+        セッション管理パターンのみをサポートし、シンプルで一貫した使用方法を提供します。
     """
     
     # CSVカラム定義（将来的な拡張に備えてクラス定数として定義）
     COLUMNS = ['timestamp_ns', 'sample_index', 'amplitude', 'rr_interval_ms']
     
-    def __init__(self, file_path: str):
+    def __init__(self):
         """
         BeatEventLoggerを初期化
         
-        Args:
-            file_path (str): 保存先CSVファイルのパス
+        Note:
+            出力ディレクトリはecg_config.BEAT_LOG_DIRECTORYから自動的に取得されます。
         """
-        self.file_path = file_path
-        self._initialize_csv_file()
+        self.output_dir = BEAT_LOG_DIRECTORY
+        self.file_path: Optional[str] = None
+        self._session_started = False
     
     def _initialize_csv_file(self):
         """
@@ -121,6 +208,58 @@ class BeatEventLogger:
                 writer = csv.writer(f)
                 # BeatEventデータ用ヘッダー
                 writer.writerow(self.COLUMNS)
+    
+    def start_session(self) -> str:
+        """
+        セッションを開始し、タイムスタンプ付きファイル名を生成
+        
+        Returns:
+            str: 生成されたファイルパス
+            
+        Raises:
+            RuntimeError: セッションが既に開始されている場合
+        """
+        if self._session_started:
+            raise RuntimeError("Session already started")
+        
+        # タイムスタンプ付きファイル名を生成
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{timestamp}_beat_session.csv"
+        self.file_path = os.path.join(self.output_dir, filename)
+        
+        # CSVファイルを初期化
+        self._initialize_csv_file()
+        self._session_started = True
+        
+        return self.file_path
+    
+    def end_session(self) -> None:
+        """
+        セッションを終了
+        
+        Note:
+            現在は特別な処理はありませんが、将来的な拡張のために用意
+            （例: バッファのフラッシュ、統計情報の出力など）
+        """
+        if not self._session_started:
+            return
+        
+        self._session_started = False
+        # 将来的にクリーンアップ処理を追加する場合はここに記述
+    
+    def get_filename(self) -> str:
+        """
+        現在のログファイル名を取得
+        
+        Returns:
+            str: ログファイルのパス
+            
+        Raises:
+            RuntimeError: セッションが開始されていない場合
+        """
+        if self.file_path is None:
+            raise RuntimeError("Session not started. Call start_session() first.")
+        return self.file_path
     
     def log_beat(self, beat_event: Dict[str, Any]):
         """
@@ -189,9 +328,9 @@ def create_beat_log_filename(base_name: str = "beat_session") -> str:
 
 def main():
     """ECGLoggerのテスト用メイン処理"""
-    # テスト用ログファイル作成（設定ファイルのディレクトリを使用）
-    test_log_path = create_ecg_log_filename("test")
-    logger = ECGLogger(test_log_path)
+    # ECGLoggerのテスト
+    logger = ECGLogger()
+    logger.start_session()
     
     # テスト用ECGデータ
     test_ecg_data = {
@@ -201,11 +340,13 @@ def main():
     
     # ECGデータをログ
     logger.log_ecg_data(test_ecg_data)
-    print(f"ECG data logged to: {logger.file_path}")
+    print(f"ECG data logged to: {logger.get_filename()}")
+    
+    logger.end_session()
     
     # BeatEventLoggerのテスト
-    test_beat_log_path = create_beat_log_filename("test")
-    beat_logger = BeatEventLogger(test_beat_log_path)
+    beat_logger = BeatEventLogger()
+    beat_logger.start_session()
     
     # テスト用BeatEventデータ
     test_beat_event = {
@@ -217,7 +358,7 @@ def main():
     
     # BeatEventデータをログ
     beat_logger.log_beat(test_beat_event)
-    print(f"Beat event data logged to: {beat_logger.file_path}")
+    print(f"Beat event data logged to: {beat_logger.get_filename()}")
     
     # rr_interval_msが無い場合のテスト
     test_beat_event_no_rr = {
@@ -228,6 +369,8 @@ def main():
     
     beat_logger.log_beat(test_beat_event_no_rr)
     print("Beat event data (without RR interval) logged successfully")
+    
+    beat_logger.end_session()
 
 
 if __name__ == "__main__":

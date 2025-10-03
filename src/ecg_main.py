@@ -1,0 +1,268 @@
+"""
+ECG心拍バイオフィードバック実験プログラム - メインアプリケーション
+
+使用例:
+    python src/ecg_main.py --mode increase    # 心拍数増加報酬モード
+    python src/ecg_main.py --mode decrease    # 心拍数減少報酬モード
+    python src/ecg_main.py --mode random      # ランダムモード（対照群）
+
+注意:
+    このプログラムは以下の3種類のログファイルを自動生成します:
+    - logs/ecg/: ECG生データ（サンプル値とタイムスタンプ）
+    - logs/beat/: R波検出イベント（ビート間隔と心拍数）
+    - logs/instantaneous_hr/: 瞬間心拍数トレンド（5秒ごとの平均と判定）
+"""
+import asyncio
+import argparse
+import signal
+import logging
+import sys
+from pathlib import Path
+
+# プロジェクトルートを追加
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from src.session.ecg_session_controller import ECGSessionController
+from src.feedback.audio_feedback import AudioFeedback
+from src.feedback.feedback_modes import IncreaseRewardMode, DecreaseRewardMode, RandomMode
+
+# ログ設定
+# 解説: アプリケーションの実行ログを標準出力とファイルの両方に記録
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('ecg_session.log')  # ECG専用ログファイル
+    ]
+)
+logger = logging.getLogger(__name__)
+
+
+class ECGBiofeedbackApp:
+    """
+    ECG心拍バイオフィードバックアプリケーションクラス
+    """
+    
+    def __init__(self):
+        """
+        アプリケーションの初期化
+        """
+        self.session_controller = None
+        self.shutdown_event = asyncio.Event()
+        
+    def create_feedback_mode(self, mode_name: str):
+        """
+        フィードバックモードを作成
+        
+        Args:
+            mode_name: フィードバックモード名 ("increase", "decrease", "random")
+            
+        Returns:
+            FeedbackMode: 選択されたフィードバックモード
+            
+        Raises:
+            ValueError: 無効なモード名の場合
+            
+        機能:
+        - increase: 心拍数が上昇したときに報酬音を再生（実験群）
+        - decrease: 心拍数が低下したときに報酬音を再生（実験群）
+        - random: トレンドに関係なくランダムに音を再生（対照群）
+        """
+        try:
+            # 音声ファイルのパスを設定
+            project_root = Path(__file__).parent.parent
+            reward_sound = str(project_root / "assets" / "audio" / "high_sound.wav")
+            punishment_sound = str(project_root / "assets" / "audio" / "low_sound.wav")
+            
+            # AudioFeedbackの初期化
+            audio_feedback = AudioFeedback(reward_sound, punishment_sound)
+            
+            # モードに応じたフィードバッククラスを作成
+            mode_map = {
+                "increase": IncreaseRewardMode,
+                "decrease": DecreaseRewardMode,
+                "random": RandomMode
+            }
+            
+            if mode_name not in mode_map:
+                raise ValueError(f"Invalid feedback mode: {mode_name}")
+            
+            feedback_mode = mode_map[mode_name](audio_feedback)
+            logger.info(f"Created feedback mode: {mode_name}")
+            return feedback_mode
+            
+        except Exception as e:
+            logger.error(f"Failed to create feedback mode: {e}")
+            raise
+    
+    def setup_signal_handlers(self):
+        """
+        シグナルハンドラーの設定
+
+        機能:
+        - SIGINT: Ctrl+Cによる中断
+        - SIGTERM: システムからの終了要求
+        これらのシグナルを受信したときに、適切にシャットダウン処理を実行
+        """
+        def signal_handler(signum, frame):
+            logger.info(f"Received signal {signum}, initiating shutdown...")
+            asyncio.create_task(self.shutdown())
+        
+        # Ctrl+C (SIGINT) とTERM信号をハンドル
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+        logger.info("Signal handlers configured")
+    
+    async def shutdown(self):
+        """
+        アプリケーションのシャットダウン
+        
+        処理フロー:
+        1. 実行中のセッションを停止
+        2. ECGデバイスとの接続を切断
+        3. ログファイルを適切にクローズ
+        """
+        logger.info("Shutting down application...")
+        
+        if self.session_controller and self.session_controller.is_running:
+            logger.info("Stopping ECG session...")
+            await self.session_controller.stop_session()
+        
+        self.shutdown_event.set()
+        logger.info("Application shutdown complete")
+    
+    def parse_arguments(self):
+        """
+        コマンドライン引数の解析
+        
+        Returns:
+            argparse.Namespace: 解析された引数
+        """
+        parser = argparse.ArgumentParser(
+            description='ECG心拍バイオフィードバック実験プログラム',
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog="""
+使用例:
+  %(prog)s --mode increase     心拍数増加で報酬音を再生
+  %(prog)s --mode decrease     心拍数減少で報酬音を再生
+  %(prog)s --mode random       ランダムに報酬音を再生（対照群）
+
+注意:
+  実行すると、以下のログファイルが自動生成されます:
+  - logs/ecg/YYYYMMDD_HHMMSS_ecg_session.csv
+  - logs/beat/YYYYMMDD_HHMMSS_beat_session.csv
+  - logs/instantaneous_hr/YYYYMMDD_HHMMSS_instantaneous_hr_session.csv
+            """
+        )
+        
+        parser.add_argument(
+            '--mode',
+            choices=['increase', 'decrease', 'random'],
+            required=True,
+            help='フィードバックモード (increase/decrease/random)'
+        )
+        
+        return parser.parse_args()
+    
+    async def run(self):
+        """
+        アプリケーションのメイン実行
+        
+        処理フロー:
+        1. コマンドライン引数の解析
+        2. ログレベルの設定
+        3. シグナルハンドラーの設定
+        4. フィードバックモードの作成
+        5. ECGSessionControllerの初期化
+        6. ECGセッションの開始
+        7. ユーザーによる中断まで待機
+        8. 適切なシャットダウン処理
+        """
+        try:
+            # コマンドライン引数の解析
+            args = self.parse_arguments()
+            
+            # シグナルハンドラーの設定
+            self.setup_signal_handlers()
+            
+            # フィードバックモードの作成
+            feedback_mode = self.create_feedback_mode(args.mode)
+            
+            # ECGSessionControllerの初期化
+            # 解説: ECGSessionControllerは以下の機能を自動的に実行します
+            # - ECGデバイスへの接続とECGデータストリーミング
+            # - R波の自動検出とビートイベントの記録
+            # - 5秒ごとの心拍トレンド判定とフィードバック処理
+            # - 3種類のログファイルの自動生成（ECG、Beat、InstantaneousHR）
+            self.session_controller = ECGSessionController(
+                feedback_mode=feedback_mode,
+                enable_logging=True,      # ロギング機能を有効化（デフォルト）
+            )
+            
+            logger.info(f"Starting ECG session with mode: {args.mode}")
+            
+            # セッション開始
+            start_success = await self.session_controller.start_session()
+            
+            if not start_success:
+                logger.error("Failed to start ECG session")
+                return 1
+            
+            logger.info("ECG session started - monitoring ECG data and heart rate trends")
+            logger.info("Feedback will be provided every 5 seconds based on heart rate trend")
+            logger.info("Press Ctrl+C to stop")
+            
+            # シャットダウンまで待機
+            await self.shutdown_event.wait()
+            
+            return 0
+            
+        except KeyboardInterrupt:
+            logger.info("User interrupted")
+            await self.shutdown()
+            return 0
+            
+        except Exception as e:
+            logger.error(f"Application error: {e}")
+            await self.shutdown()
+            return 1
+
+
+async def main():
+    """
+    メイン関数
+    
+    Returns:
+        int: 終了コード（0: 成功、1: エラー）
+    """
+    app = ECGBiofeedbackApp()
+    return await app.run()
+
+
+def main_sync():
+    """
+    同期版メイン関数（エントリーポイント用）
+    
+    解説:
+    - asyncio.run()を使用して非同期メイン関数を実行
+    - Pythonのエントリーポイント（if __name__ == "__main__"）から呼び出される
+    
+    Returns:
+        int: 終了コード
+    """
+    try:
+        return asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Program interrupted")
+        return 0
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        return 1
+
+
+if __name__ == "__main__":
+    exit_code = main_sync()
+    sys.exit(exit_code)

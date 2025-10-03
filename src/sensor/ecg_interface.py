@@ -108,14 +108,13 @@ class ECGInterface:
     Polar ECG専用インターフェースクラス
     """
     
-    def __init__(self, device_id=None):
+    def __init__(self):
         """
         Polar ECGインターフェースを初期化
         
-        Args:
-            device_id (str, optional): PolarセンサーのデジタルID
+        デバイスIDは ecg_config.ECG_POLAR_DEVICE_ID から取得
         """
-        self.device_id = device_id or ECG_POLAR_DEVICE_ID
+        self.device_id = ECG_POLAR_DEVICE_ID
         self.device_address = None
         self.device_name = None
         self.client = None
