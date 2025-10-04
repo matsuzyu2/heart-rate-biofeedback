@@ -27,7 +27,7 @@ class BaseSessionLogger(ABC):
     
     def __init__(self):
         """
-        BaseSessionLoggerを初期化å
+        BaseSessionLoggerを初期化
         """
         self.output_dir = self._get_log_directory()
         self.file_path: Optional[str] = None
