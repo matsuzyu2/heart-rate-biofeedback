@@ -6,9 +6,6 @@ import logging
 from .simple_r_peak_detector import SimpleRPeakDetector, BeatEvent
 # 瞬間心拍数算出クラスをインポート
 from .instantaneous_heart_rate import InstantaneousHeartRate, TrendType
-# ロガークラスをインポート
-from .ecg_logger import BeatEventLogger
-from .instantaneous_hr_logger import InstantaneousHRLogger
 # ECG設定をインポート
 from ..config.ecg_config import ECG_SAMPLING_RATE, HR_BLOCK_WINDOW_SECONDS
 

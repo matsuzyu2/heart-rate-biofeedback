@@ -9,8 +9,9 @@ from typing import Optional, Dict
 from ..sensor.ecg_interface import ECGInterface
 from ..processing.ecg_processor import ECGProcessor
 from ..processing.simple_r_peak_detector import BeatEvent
-from ..processing.ecg_logger import BeatEventLogger, ECGLogger
-from ..processing.instantaneous_hr_logger import InstantaneousHRLogger
+from ..logger.ecg_logger import ECGLogger
+from ..logger.beat_event_logger import BeatEventLogger
+from ..logger.instantaneous_hr_logger import InstantaneousHRLogger
 from ..feedback.feedback_modes import FeedbackMode
 
 # ログ設定
