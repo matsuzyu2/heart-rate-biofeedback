@@ -25,7 +25,8 @@ class ECGDataResult(TypedDict):
     timestamps: list[int]
 
 
-# ECGデータコールバック関数の型エイリアス
+# ECGデータを受信した際に呼び出されるコールバック関数の型エイリアス。
+# 解析済みのECGデータ（ECGDataResult型）を引数として受け取り、戻り値はNone。
 ECGCallback = Callable[[ECGDataResult], None]
 
 
