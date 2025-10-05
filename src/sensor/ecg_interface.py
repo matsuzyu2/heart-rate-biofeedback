@@ -2,6 +2,7 @@
 import asyncio
 from bleak import BleakClient, BleakScanner
 import logging
+from typing import Callable, Optional, TypedDict
 
 # ECG専用設定を読み込み
 from ..config.ecg_config import (
@@ -18,28 +19,38 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class ECGDataResult(TypedDict):
+    """ECGデータ解析結果の型定義"""
+    ecg_samples: list[int]
+    timestamps: list[int]
+
+
+# ECGデータコールバック関数の型エイリアス
+ECGCallback = Callable[[ECGDataResult], None]
+
+
 class ECGDataFormatter:
     """
     ECG生データの変換専用クラス
     """
     
-    def __init__(self):
+    def __init__(self) -> None:
         """ECGDataFormatterを初期化"""
         pass
     
-    def convert_array_to_signed_int(self, data, offset, length):
+    def convert_array_to_signed_int(self, data: bytes, offset: int, length: int) -> int:
         """バイト配列を符号付き整数に変換"""
         return int.from_bytes(
             bytearray(data[offset : offset + length]), byteorder="little", signed=True,
         )
 
-    def convert_to_unsigned_long(self, data, offset, length):
+    def convert_to_unsigned_long(self, data: bytes, offset: int, length: int) -> int:
         """バイト配列を符号なし長整数に変換"""
         return int.from_bytes(
             bytearray(data[offset : offset + length]), byteorder="little", signed=False,
         )  
     
-    def parse_ecg_data(self, raw_data):
+    def parse_ecg_data(self, raw_data: bytes) -> ECGDataResult:
         """
         Polarセンサーからの生ECGデータを解析
         
@@ -47,7 +58,7 @@ class ECGDataFormatter:
             raw_data (bytes): Polarセンサーからの生ECGデータ
             
         Returns:
-            dict: ECGサンプルデータと処理情報を含む辞書
+            ECGDataResult: ECGサンプルデータと処理情報を含む辞書
                 {
                     'ecg_samples': list,  # ECGサンプル値のリスト
                     'timestamps': list,   # 各サンプルのタイムスタンプ（絶対時刻ナノ秒数）
@@ -106,39 +117,43 @@ class ECGDataFormatter:
 class ECGInterface:
     """
     Polar ECG専用インターフェースクラス
+    
+    機能:
+    - Polar H10センサーとのBLE接続管理
+    - ECGデータストリーミングの開始・停止
+    - 生ECGデータの受信と解析結果の配信
+    - 過渡応答期間のデータフィルタリング
     """
     
-    def __init__(self):
+    def __init__(self) -> None:
         """
         Polar ECGインターフェースを初期化
-        
-        デバイスIDは ecg_config.ECG_POLAR_DEVICE_ID から取得
         """
-        self.device_id = ECG_POLAR_DEVICE_ID
-        self.device_address = None
-        self.device_name = None
-        self.client = None
-        self.is_connected = False
-        self.is_streaming = False
-        self.ecg_callback = None
+        self.device_id: str = ECG_POLAR_DEVICE_ID
+        self.device_address: Optional[str] = None
+        self.device_name: Optional[str] = None
+        self.client: Optional[BleakClient] = None
+        self.is_connected: bool = False
+        self.is_streaming: bool = False
+        self.ecg_callback: Optional[ECGCallback] = None
 
         # 過渡応答除外関連
-        self.streaming_start_time_ns = None
-        self.transition_period_seconds = TRANSITION_PERIOD_SECONDS
-        self.transition_period_passed = False  # 過渡応答期間が終了したかのフラグ
+        self.streaming_start_time_ns: Optional[int] = None
+        self.transition_period_seconds: float = TRANSITION_PERIOD_SECONDS
+        self.transition_period_passed: bool = False  # 過渡応答期間が終了したかのフラグ
 
-        self.data_formatter = ECGDataFormatter()
+        self.data_formatter: ECGDataFormatter = ECGDataFormatter()
 
-    def set_ecg_callback(self, callback):
+    def set_ecg_callback(self, callback: ECGCallback) -> None:
         """
         ECGデータ受信時のコールバック関数を設定
         
         Args:
-            callback (callable): ECGデータを受信した際に呼び出される関数
+            callback: ECGデータを受信した際に呼び出される関数
         """
         self.ecg_callback = callback
     
-    async def find_polar_device(self):
+    async def find_polar_device(self) -> Optional[str]:
         """Polarデバイスを検出"""
         logger.info(f"Searching for Polar device with ID: {self.device_id}")
         devices = await BleakScanner.discover(timeout=ECG_TIMEOUT_SECONDS)
@@ -151,15 +166,15 @@ class ECGInterface:
         
         return None
     
-    def _filter_transition_data(self, ecg_result):
+    def _filter_transition_data(self, ecg_result: ECGDataResult) -> Optional[ECGDataResult]:
         """
         過渡応答期間のデータをフィルタリング
         
         Args:
-            ecg_result (dict): ECGデータ結果
+            ecg_result: ECGデータ結果
             
         Returns:
-            dict or None: フィルタリング後のECGデータ、過渡応答期間中の場合はNone
+            フィルタリング後のECGデータ、過渡応答期間中の場合はNone
         """
         # 過渡応答期間が既に終了している場合はフィルタリングしない
         if self.transition_period_passed:
@@ -208,7 +223,7 @@ class ECGInterface:
                 'timestamps': filtered_timestamps
             }
     
-    async def ecg_notification_handler(self, sender, data):
+    async def ecg_notification_handler(self, sender: int, data: bytearray) -> None:
         """ECGデータの通知を処理（polar_h10_get_ecg.py仕様準拠）"""
         try:
             # ECGデータ解析（PMD仕様準拠）
@@ -232,7 +247,7 @@ class ECGInterface:
         except Exception as e:
             logger.error(f"Error processing ECG data: {e}")
     
-    async def connect(self):
+    async def connect(self) -> bool:
         """Polarセンサーに接続"""
         try:
             self.device_address = await self.find_polar_device()
@@ -252,7 +267,7 @@ class ECGInterface:
             logger.error(f"Failed to connect to ECG service: {e}")
             return False
     
-    async def disconnect(self):
+    async def disconnect(self) -> None:
         """接続を切断"""
         if self.is_streaming:
             await self.stop_ecg_streaming()
@@ -265,7 +280,7 @@ class ECGInterface:
             except Exception as e:
                 logger.error(f"Failed to disconnect from ECG service: {e}")
     
-    async def start_ecg_streaming(self):
+    async def start_ecg_streaming(self) -> bool:
         """ECGストリーミングを開始"""
         if not self.is_connected:
             logger.error("Not connected to ECG device")
@@ -291,7 +306,7 @@ class ECGInterface:
             logger.error(f"Failed to start ECG streaming: {e}")
             return False
     
-    async def stop_ecg_streaming(self):
+    async def stop_ecg_streaming(self) -> None:
         """ECGストリーミングを停止"""
         if self.client and self.is_connected and self.is_streaming:
             try:
@@ -309,7 +324,7 @@ class ECGInterface:
                 logger.error(f"Failed to stop ECG streaming: {e}")
 
 
-async def main():
+async def main() -> None:
     """ECGインターフェースのテスト用メイン処理"""
     ecg_interface = ECGInterface()
     
