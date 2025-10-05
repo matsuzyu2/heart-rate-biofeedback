@@ -85,38 +85,3 @@ class BeatEventLogger(BaseSessionLogger):
                 amplitude,
                 rr_interval_ms
             ])
-
-
-def main():
-    """BeatEventLoggerのテスト用メイン処理"""
-    # BeatEventLoggerのテスト
-    beat_logger = BeatEventLogger()
-    beat_logger.start_session()
-    
-    # テスト用BeatEventデータ
-    test_beat_event = {
-        "timestamp_ns": 1694772000000000000,
-        "sample_index": 1000,
-        "amplitude": 0.85,
-        "rr_interval_ms": 750.5
-    }
-    
-    # BeatEventデータをログ
-    beat_logger.log_beat(test_beat_event)
-    print(f"Beat event data logged to: {beat_logger.get_filename()}")
-    
-    # rr_interval_msが無い場合のテスト
-    test_beat_event_no_rr = {
-        "timestamp_ns": 1694772000750000000,
-        "sample_index": 1098,
-        "amplitude": 0.92
-    }
-    
-    beat_logger.log_beat(test_beat_event_no_rr)
-    print("Beat event data (without RR interval) logged successfully")
-    
-    beat_logger.end_session()
-
-
-if __name__ == "__main__":
-    main()
