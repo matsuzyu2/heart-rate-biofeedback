@@ -5,12 +5,6 @@ ECG心拍バイオフィードバック実験プログラム - メインアプ�
     python src/ecg_main.py --mode increase    # 心拍数増加報酬モード
     python src/ecg_main.py --mode decrease    # 心拍数減少報酬モード
     python src/ecg_main.py --mode random      # ランダムモード（対照群）
-
-注意:
-    このプログラムは以下の3種類のログファイルを自動生成します:
-    - logs/ecg/: ECG生データ（サンプル値とタイムスタンプ）
-    - logs/beat/: R波検出イベント（ビート間隔と心拍数）
-    - logs/instantaneous_hr/: 瞬間心拍数トレンド（5秒ごとの平均と判定）
 """
 import asyncio
 import argparse
@@ -64,11 +58,6 @@ class ECGBiofeedbackApp:
             
         Raises:
             ValueError: 無効なモード名の場合
-            
-        機能:
-        - increase: 心拍数が上昇したときに報酬音を再生（実験群）
-        - decrease: 心拍数が低下したときに報酬音を再生（実験群）
-        - random: トレンドに関係なくランダムに音を再生（対照群）
         """
         try:
             # 音声ファイルのパスを設定
@@ -149,13 +138,7 @@ class ECGBiofeedbackApp:
   %(prog)s --mode increase     心拍数増加で報酬音を再生
   %(prog)s --mode decrease     心拍数減少で報酬音を再生
   %(prog)s --mode random       ランダムに報酬音を再生（対照群）
-
-注意:
-  実行すると、以下のログファイルが自動生成されます:
-  - logs/ecg/YYYYMMDD_HHMMSS_ecg_session.csv
-  - logs/beat/YYYYMMDD_HHMMSS_beat_session.csv
-  - logs/instantaneous_hr/YYYYMMDD_HHMMSS_instantaneous_hr_session.csv
-            """
+  """
         )
         
         parser.add_argument(
@@ -192,11 +175,6 @@ class ECGBiofeedbackApp:
             feedback_mode = self.create_feedback_mode(args.mode)
             
             # ECGSessionControllerの初期化
-            # 解説: ECGSessionControllerは以下の機能を自動的に実行します
-            # - ECGデバイスへの接続とECGデータストリーミング
-            # - R波の自動検出とビートイベントの記録
-            # - 5秒ごとの心拍トレンド判定とフィードバック処理
-            # - 3種類のログファイルの自動生成（ECG、Beat、InstantaneousHR）
             self.session_controller = ECGSessionController(
                 feedback_mode=feedback_mode,
                 enable_logging=True,      # ロギング機能を有効化（デフォルト）
@@ -245,10 +223,6 @@ async def main():
 def main_sync():
     """
     同期版メイン関数（エントリーポイント用）
-    
-    解説:
-    - asyncio.run()を使用して非同期メイン関数を実行
-    - Pythonのエントリーポイント（if __name__ == "__main__"）から呼び出される
     
     Returns:
         int: 終了コード

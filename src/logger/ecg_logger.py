@@ -103,32 +103,3 @@ class ECGLogger(BaseSessionLogger):
                 必須フィールド: 'ecg_samples', 'timestamps'
         """
         self.log_ecg_data(ecg_data)
-
-
-def main():
-    """ECGLoggerのテスト用メイン処理"""
-    # ECGLoggerのテスト
-    logger = ECGLogger()
-    logger.start_session()
-    
-    # テスト用ECGデータ
-    test_ecg_data = {
-        "ecg_samples": [0.1, 0.15, 0.2, 0.18, 0.12],
-        "timestamps": [
-            1694772000000000000,
-            1694772000007692307,
-            1694772000015384615,
-            1694772000023076923,
-            1694772000030769230
-        ]
-    }
-    
-    # ECGデータをログ
-    logger.log_ecg_data(test_ecg_data)
-    print(f"ECG data logged to: {logger.get_filename()}")
-    
-    logger.end_session()
-
-
-if __name__ == "__main__":
-    main()

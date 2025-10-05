@@ -323,34 +323,3 @@ class ECGInterface:
                 
             except Exception as e:
                 logger.error(f"Failed to stop ECG streaming: {e}")
-
-
-async def main() -> None:
-    """ECGインターフェースのテスト用メイン処理"""
-    ecg_interface = ECGInterface()
-    
-    try:
-        # 接続
-        if await ecg_interface.connect():
-            # ECGストリーミング開始
-            if await ecg_interface.start_ecg_streaming():
-                logger.info("Monitoring ECG data... Press Ctrl+C to stop")
-                
-                try:
-                    # 30秒間ECGデータを監視
-                    await asyncio.sleep(30)
-                except KeyboardInterrupt:
-                    logger.info("Stopping ECG monitoring...")
-        
-        # クリーンアップ
-        await ecg_interface.stop_ecg_streaming()
-        await ecg_interface.disconnect()
-        
-    except Exception as e:
-        logger.error(f"Error in ECG main: {e}")
-        if ecg_interface.is_connected:
-            await ecg_interface.disconnect()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
