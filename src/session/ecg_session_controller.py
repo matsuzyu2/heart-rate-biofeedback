@@ -4,7 +4,7 @@ ECGベースの実験セッションの開始・停止とコンポーネント�
 """
 import asyncio
 import logging
-from typing import Optional, Dict
+from typing import Optional
 
 from ..sensor.ecg_interface import ECGInterface
 from ..processing.ecg_processor import ECGProcessor
@@ -14,15 +14,19 @@ from ..logger.beat_event_logger import BeatEventLogger
 from ..logger.instantaneous_hr_logger import InstantaneousHRLogger
 from ..feedback.feedback_modes import FeedbackMode
 
+from ..config.ecg_config import (
+    SESSION_DURATION_SECONDS
+)
+
 # ログ設定
 logger = logging.getLogger(__name__)
 
 
 class ECGSessionController:
     """
-    ECGセッションの制御クラス（シンプル版）
+    ECGセッションの制御クラス
     
-    責任:
+    役割:
     - ECGセッションの開始・停止
     - ECGInterface と ECGProcessor の統合
     - 5秒ごとのトレンド判定とフィードバック処理
@@ -33,7 +37,6 @@ class ECGSessionController:
         self,
         feedback_mode: FeedbackMode,
         enable_logging: bool = True,
-        session_info: Optional[Dict[str, str]] = None
     ):
         """
         ECGSessionControllerの初期化
@@ -41,19 +44,11 @@ class ECGSessionController:
         Args:
             feedback_mode: フィードバックモードインスタンス
             enable_logging: ログ機能を有効にするかどうか（デフォルト: True）
-            session_info: セッション情報（後方互換性のため保持）
-            
-        Note:
-            ログファイルの保存先はecg_config.pyで設定されたディレクトリに自動保存されます。
-            - ECG: ecg_config.ECG_LOG_DIRECTORY
-            - Beat: ecg_config.BEAT_LOG_DIRECTORY
-            - Instantaneous HR: ecg_config.INSTANTANEOUS_HR_LOG_DIRECTORY
         """
         self.feedback_mode = feedback_mode
         
         # ログ機能の設定（デフォルトで有効）
         self.enable_logging = enable_logging
-        self.session_info = session_info or {}
         
         # ロガー
         self.beat_logger: Optional[BeatEventLogger] = None
@@ -69,6 +64,9 @@ class ECGSessionController:
         
         # フィードバックタイマー用のタスク
         self._feedback_task: Optional[asyncio.Task] = None
+        
+        # セッション自動終了タイマー用のタスク
+        self._session_timer_task: Optional[asyncio.Task] = None
         
         logger.info(f"ECGSessionController initialized with mode: {type(feedback_mode).__name__}")
     
@@ -96,6 +94,9 @@ class ECGSessionController:
         # フィードバックタイマーの開始
         self._feedback_task = asyncio.create_task(self._feedback_timer_loop())
         
+        # セッション自動終了タイマーの開始
+        self._session_timer_task = asyncio.create_task(self._session_timer())
+        
         self.is_running = True
         logger.info("ECG session started successfully")
         return True
@@ -121,6 +122,15 @@ class ECGSessionController:
             except asyncio.CancelledError:
                 pass
             self._feedback_task = None
+        
+        # セッション自動終了タイマーの停止
+        if self._session_timer_task:
+            self._session_timer_task.cancel()
+            try:
+                await self._session_timer_task
+            except asyncio.CancelledError:
+                pass
+            self._session_timer_task = None
         
         # ログ機能の終了
         if self.beat_logger:
@@ -214,6 +224,32 @@ class ECGSessionController:
                 except Exception as e:
                     logger.error(f"Error in feedback timer: {e}")
     
+    async def _session_timer(self) -> None:
+        """
+        セッション自動終了タイマー
+        """
+
+        duration = SESSION_DURATION_SECONDS
+        
+        try:
+            # 設定時間のログ出力
+            minutes = duration / 60.0
+            logger.info(f"Session will automatically stop after {duration} seconds ({minutes:.1f} minutes)")
+            
+            # 設定時間待機
+            await asyncio.sleep(duration)
+            
+            # 自動終了のログ出力
+            if self.is_running:
+                await self.stop_session()
+                
+        except asyncio.CancelledError:
+            # 手動停止された場合
+            logger.debug("Session timer cancelled (manual stop)")
+            raise
+        except Exception as e:
+            logger.error(f"Error in session timer: {e}")
+    
     def _on_ecg_data(self, ecg_data: dict) -> None:
         """
         ECGデータ受信時のコールバック
@@ -271,10 +307,6 @@ class ECGSessionController:
     def _setup_logging(self) -> None:
         """
         ログ機能のセットアップ
-        各ロガーはecg_config.pyで定義されたデフォルトディレクトリに自動保存
-        - BeatEventLogger: ecg_config.BEAT_LOG_DIRECTORY
-        - InstantaneousHRLogger: ecg_config.INSTANTANEOUS_HR_LOG_DIRECTORY
-        - ECGLogger: ecg_config.ECG_LOG_DIRECTORY
         """
         if not self.enable_logging:
             return

@@ -117,7 +117,7 @@ class ECGBiofeedbackApp:
         logger.info("Shutting down application...")
         
         if self.session_controller and self.session_controller.is_running:
-            logger.info("Stopping ECG session...")
+            logger.info("Session manually stopped by user")
             await self.session_controller.stop_session()
         
         self.shutdown_event.set()
@@ -191,7 +191,7 @@ class ECGBiofeedbackApp:
             
             logger.info("ECG session started - monitoring ECG data and heart rate trends")
             logger.info("Feedback will be provided every 5 seconds based on heart rate trend")
-            logger.info("Press Ctrl+C to stop")
+            logger.info("Press Ctrl+C to stop manually")
             
             # シャットダウンまで待機
             await self.shutdown_event.wait()
