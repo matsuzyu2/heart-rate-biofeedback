@@ -23,3 +23,6 @@ HR_BLOCK_WINDOW_SECONDS = 5.0  # ブロック平均の時間窓（秒）
 
 # 過渡応答除外設定
 TRANSITION_PERIOD_SECONDS = 5.0  # Polarセンサー装着時の過渡応答期間（秒）
+
+# セッション自動終了設定
+SESSION_DURATION_SECONDS = 900  # 実験時間（秒）
