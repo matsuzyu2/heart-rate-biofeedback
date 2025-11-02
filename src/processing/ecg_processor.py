@@ -205,11 +205,6 @@ class ECGProcessor:
         # ブロック平均を取得
         block_averages = self.instantaneous_hr.get_block_averages(window_seconds=window_duration_s)
         
-        if not block_averages:
-            # フォールバック: 従来のRPeakDetectorを使用
-            fallback_window_ms = window_duration_ms or int(HR_BLOCK_WINDOW_SECONDS * 1000)
-            return self.r_peak_detector.get_heart_rate_bpm(fallback_window_ms)
-        
         # 最新のブロック平均を返す
         latest_block = block_averages[-1]
         return latest_block["average_hr"]

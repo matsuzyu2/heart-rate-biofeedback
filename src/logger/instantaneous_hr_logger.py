@@ -12,9 +12,6 @@ class InstantaneousHRLogger(BaseSessionLogger):
     """
     瞬間心拍数データをCSVファイルに保存するクラス
     
-    R-R間隔から計算された瞬間心拍数を記録します。
-    BaseSessionLoggerを継承し、統一されたセッション管理APIを提供します。
-    
     CSVフォーマット:
         id: 連番ID（1から開始）
         timestamp_ns: 心拍発生時刻（ナノ秒）

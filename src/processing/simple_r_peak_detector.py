@@ -1,5 +1,4 @@
-# シンプルなR波検出クラス（動的閾値方式）
-# FIXME: R波検出でインデックス一個分ほど間違える場合有り
+# 1次微分のゼロクロスと2次微分の閾値を使用してR波を検出
 from typing import List, Optional, Callable
 import numpy as np
 import logging
@@ -33,13 +32,15 @@ class BeatEvent:
 
 class SimpleRPeakDetector:
     """
-    動的閾値方式を使用したシンプルなR波検出クラス
+    2次微分方式を使用したR波検出クラス
     
     アルゴリズム:
-    1. スライディングウィンドウで信号の統計情報を追跡
-    2. 窓内の最大値・中央値を計算
-    3. 閾値 = 中央値 + (最大値 - 中央値) × 0.6
-    4. リフラクトリ期間で偽陽性を除去
+    1. 1次微分を計算（後退差分）
+    2. 2次微分を計算（2階差分）
+    3. 1次微分のゼロクロス（正→負）を検出
+    4. 2次微分が負の閾値を下回ることを確認
+    5. 閾値 = std(2次微分) × 3.5
+    6. リフラクトリ期間で偽陽性を除去
     """
     
     def __init__(self, sampling_rate: Optional[int] = None):
@@ -52,32 +53,32 @@ class SimpleRPeakDetector:
         self.sampling_rate = sampling_rate or ECG_SAMPLING_RATE
         
         # アルゴリズムパラメータ
-        self.statistics_window_seconds = 5.0  # 統計窓サイズ（秒）
-        self.threshold_coefficient = 0.6  # 閾値係数
+        self.derivative_window_seconds = 5.0  # 微分統計窓サイズ（秒）
+        self.derivative_threshold_coefficient = 3.5  # 2次微分閾値係数（Rスクリプトと同じ）
         self.refractory_period_ms = 200  # リフラクトリ期間（ミリ秒）
         
         # サンプル数に変換
-        self.statistics_window_samples = int(self.statistics_window_seconds * self.sampling_rate)
+        self.derivative_window_samples = int(self.derivative_window_seconds * self.sampling_rate)
         self.refractory_period_samples = int(self.refractory_period_ms * self.sampling_rate / 1000)
         
-        # 信号バッファ（統計計算用）
-        self.signal_buffer = deque(maxlen=self.statistics_window_samples)
-        self.timestamp_buffer = deque(maxlen=self.statistics_window_samples)
+        # 信号バッファ
+        self.signal_buffer = deque(maxlen=10)  # 微分計算用（少数でOK）
+        self.timestamp_buffer = deque(maxlen=10)
+        
+        # 微分バッファ
+        self.first_derivative_buffer = deque(maxlen=10)  # ゼロクロス検出用
+        self.second_derivative_buffer = deque(maxlen=self.derivative_window_samples)  # 閾値計算用
         
         # 状態変数
         self.sample_count = 0
         self.last_peak_sample = -self.refractory_period_samples
         self.detected_peaks: List[BeatEvent] = []
         
-        # 動的閾値
-        self.current_threshold = 0.0
+        # 2次微分の動的閾値
+        self.second_derivative_threshold = 0.0
         
         # コールバック関数
         self.beat_callback: Optional[Callable[[BeatEvent], None]] = None
-        
-        logger.info(f"SimpleRPeakDetector初期化: サンプリング周波数={self.sampling_rate}Hz, "
-                   f"統計窓={self.statistics_window_seconds}秒, "
-                   f"閾値係数={self.threshold_coefficient}")
     
     def set_beat_callback(self, callback: Callable[[BeatEvent], None]):
         """
@@ -105,12 +106,16 @@ class SimpleRPeakDetector:
         detected_beats = []
         
         for sample, timestamp in zip(samples, timestamps):
+            # 信号バッファに追加
             self.signal_buffer.append(sample)
             self.timestamp_buffer.append(timestamp)
             self.sample_count += 1
             
-            # 動的閾値を更新
-            self._update_threshold()
+            # 微分を計算
+            self._calculate_derivatives(sample)
+            
+            # 2次微分の閾値を更新
+            self._update_derivative_threshold()
             
             # R波検出をチェック
             beat_event = self._check_r_peak_detection(sample, timestamp)
@@ -124,29 +129,50 @@ class SimpleRPeakDetector:
         
         return detected_beats
     
-    def _update_threshold(self):
+    def _calculate_derivatives(self, current_sample: float):
         """
-        動的閾値を更新
+        1次微分と2次微分を計算（因果的フィルタ）
         
-        統計窓内の信号から閾値を計算:
-        閾値 = 中央値 + (最大値 - 中央値) × 係数
+        Args:
+            current_sample: 現在のサンプル値
         """
-        # 統計窓が満たされていない場合はスキップ
-        if len(self.signal_buffer) < min(self.statistics_window_samples, self.sampling_rate):
-            # 最低1秒分のデータが必要
+        # 1次微分を計算（後退差分）
+        if len(self.signal_buffer) >= 2:
+            first_deriv = current_sample - self.signal_buffer[-2]
+            self.first_derivative_buffer.append(first_deriv)
+        
+        # 2次微分を計算（2階差分）
+        if len(self.signal_buffer) >= 3:
+            second_deriv = (current_sample - 2 * self.signal_buffer[-2] + self.signal_buffer[-3])
+            self.second_derivative_buffer.append(second_deriv)
+    
+    def _update_derivative_threshold(self):
+        """
+        2次微分の動的閾値を更新
+        
+        Rスクリプトのアルゴリズム:
+        閾値 = -std(2次微分) × 3.5
+        （負の値であることに注意）
+        """
+        # 最低1秒分のデータが必要
+        min_samples = min(self.derivative_window_samples, self.sampling_rate)
+        if len(self.second_derivative_buffer) < min_samples:
             return
         
-        # 統計情報を計算
-        signal_array = np.array(self.signal_buffer)
-        median_value = np.median(signal_array)
-        max_value = np.max(signal_array)
+        # 2次微分の標準偏差を計算
+        second_deriv_array = np.array(self.second_derivative_buffer)
+        std_second_deriv = np.std(second_deriv_array)
         
-        # 閾値を計算: 中央値 + (最大値 - 中央値) × 係数
-        self.current_threshold = median_value + (max_value - median_value) * self.threshold_coefficient
+        # 負の閾値を計算（Rスクリプト: sg2[i] < -th）
+        self.second_derivative_threshold = -std_second_deriv * self.derivative_threshold_coefficient
     
     def _check_r_peak_detection(self, sample: float, timestamp: int) -> Optional[BeatEvent]:
         """
-        現在のサンプルがR波かどうかを判定
+        現在のサンプルがR波かどうかを判定（2次微分方式）
+        
+        検出条件:
+        1. 1次微分のゼロクロス: first_deriv[i-1] > 0 AND first_deriv[i] < 0
+        2. 2次微分が負の閾値を下回る: second_deriv[i] < threshold
         
         Args:
             sample: 現在のECGサンプル値
@@ -156,46 +182,43 @@ class SimpleRPeakDetector:
             Optional[BeatEvent]: 検出されたR波イベント（検出されなかった場合はNone）
         """
         # 閾値が設定されていない場合はスキップ
-        if self.current_threshold == 0.0:
+        if self.second_derivative_threshold == 0.0:
             return None
         
         # リフラクトリ期間チェック
         if self.sample_count - self.last_peak_sample < self.refractory_period_samples:
             return None
         
-        # ピーク検出: 現在のサンプルが閾値を超えているか
-        if sample > self.current_threshold:
-            # 局所最大値かチェック（前後のサンプルと比較）
-            if self._is_local_maximum(sample):
-                # R波として検出
-                beat_event = self._create_beat_event(sample, timestamp)
-                self.last_peak_sample = self.sample_count
-                return beat_event
+        # 微分バッファが十分でない場合はスキップ
+        if len(self.first_derivative_buffer) < 2 or len(self.second_derivative_buffer) < 1:
+            return None
         
-        return None
-    
-    def _is_local_maximum(self, sample: float) -> bool:
-        """
-        現在のサンプルが局所最大値かどうかを判定
+        # 条件1: 1次微分のゼロクロス（正→負）
+        first_deriv_prev = self.first_derivative_buffer[-2]
+        first_deriv_current = self.first_derivative_buffer[-1]
         
-        Args:
-            sample: 現在のサンプル値
-            
-        Returns:
-            bool: 局所最大値の場合True
-        """
-        # バッファが十分でない場合は判定不可
-        if len(self.signal_buffer) < 3:
-            return False
+        is_zero_crossing = (first_deriv_prev > 0) and (first_deriv_current < 0)
         
-        # 現在のサンプルは最後の要素
-        # 前のサンプルと比較
-        if len(self.signal_buffer) >= 2:
-            prev_sample = self.signal_buffer[-2]
-            if sample <= prev_sample:
-                return False
+        if not is_zero_crossing:
+            return None
         
-        return True
+        # 条件2: 2次微分が負の閾値を下回る（急峻な下降）
+        second_deriv_current = self.second_derivative_buffer[-1]
+        
+        is_sharp_peak = second_deriv_current < self.second_derivative_threshold
+        
+        if not is_sharp_peak:
+            return None
+        
+        # 両方の条件を満たす場合、R波として検出
+        beat_event = self._create_beat_event(sample, timestamp)
+        self.last_peak_sample = self.sample_count
+        
+        logger.debug(f"R波検出: sample={sample:.2f}, "
+                    f"1st_deriv_prev={first_deriv_prev:.2f}, 1st_deriv_curr={first_deriv_current:.2f}, "
+                    f"2nd_deriv={second_deriv_current:.2f}, threshold={self.second_derivative_threshold:.2f}")
+        
+        return beat_event
     
     def _create_beat_event(self, amplitude: float, timestamp: int) -> BeatEvent:
         """
@@ -222,52 +245,14 @@ class SimpleRPeakDetector:
             rr_interval_ms=rr_interval_ms
         )
     
-    def get_heart_rate_bpm(self, window_duration_ms: int = 10000) -> Optional[float]:
-        """
-        指定された時間窓での心拍数を計算
-        
-        Args:
-            window_duration_ms: 計算窓の時間幅（ミリ秒）
-            
-        Returns:
-            Optional[float]: 心拍数（BPM）、計算できない場合はNone
-        """
-        if len(self.detected_peaks) < 2:
-            return None
-        
-        # 現在時刻から指定時間窓内のビートを取得
-        current_time = self.detected_peaks[-1].timestamp_ns
-        window_start_time = current_time - (window_duration_ms * 1_000_000)  # ナノ秒に変換
-        
-        recent_beats = [
-            beat for beat in self.detected_peaks 
-            if beat.timestamp_ns >= window_start_time
-        ]
-        
-        if len(recent_beats) < 2:
-            return None
-        
-        # RR間隔の平均から心拍数を計算
-        rr_intervals = [
-            beat.rr_interval_ms for beat in recent_beats[1:] 
-            if beat.rr_interval_ms is not None
-        ]
-        
-        if not rr_intervals:
-            return None
-        
-        avg_rr_interval_ms = np.mean(rr_intervals)
-        heart_rate_bpm = 60000.0 / avg_rr_interval_ms  # 60秒 * 1000ms / 平均RR間隔
-        
-        return heart_rate_bpm
-    
     def reset(self):
         """検出器の状態をリセット"""
         self.signal_buffer.clear()
         self.timestamp_buffer.clear()
+        self.first_derivative_buffer.clear()
+        self.second_derivative_buffer.clear()
         self.sample_count = 0
         self.last_peak_sample = -self.refractory_period_samples
         self.detected_peaks.clear()
-        self.current_threshold = 0.0
-        
-        logger.info("SimpleRPeakDetector reset")
+        self.second_derivative_threshold = 0.0
+

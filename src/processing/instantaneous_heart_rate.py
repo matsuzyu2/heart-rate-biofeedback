@@ -5,7 +5,7 @@ import logging
 
 # 既存のBeatEventをインポート
 from .simple_r_peak_detector import BeatEvent
-from ..config.ecg_config import HR_TREND_THRESHOLD_BPM, HR_BLOCK_WINDOW_SECONDS
+from ..config.ecg_config import HR_TREND_THRESHOLD_BPM, HR_BLOCK_WINDOW_SECONDS, HR_FILTER_THRESHOLD_BPM
 
 # ログ設定
 logger = logging.getLogger(__name__)
@@ -20,21 +20,29 @@ class InstantaneousHeartRate:
     
     Attributes:
         trend_threshold_bpm (float): トレンド判定の閾値（BPM単位）
-        _instantaneous_hr_data (List[Tuple[int, float]]): 瞬間心拍数の時系列データ
+        filter_threshold_bpm (float): フィルタリングの閾値（BPM単位）
+        _instantaneous_hr_data (List[Tuple[int, float]]): 瞬間心拍数の時系列データ（有効データのみ）
         _max_data_points (int): メモリ管理のためのデータ点数上限
     """
     
-    def __init__(self, trend_threshold_bpm: Optional[float] = None):
+    def __init__(
+        self, 
+        trend_threshold_bpm: Optional[float] = None,
+        filter_threshold_bpm: Optional[float] = None
+    ):
         """
         瞬間心拍数算出器を初期化
         
         Args:
             trend_threshold_bpm (Optional[float]): トレンド判定の閾値（BPM）
                                                  Noneの場合は設定ファイルから取得
+            filter_threshold_bpm (Optional[float]): フィルタリングの閾値（BPM）
+                                                   Noneの場合は設定ファイルから取得
         """
         self.trend_threshold_bpm = trend_threshold_bpm or HR_TREND_THRESHOLD_BPM
+        self.filter_threshold_bpm = filter_threshold_bpm or HR_FILTER_THRESHOLD_BPM
         
-        # 瞬間心拍数の時系列データ (timestamp_ns, hr_bpm)
+        # 瞬間心拍数の時系列データ (timestamp_ns, hr_bpm) - 有効データのみ
         self._instantaneous_hr_data: List[Tuple[int, float]] = []
         
         # 効率的な検索のためのインデックス管理
@@ -58,12 +66,39 @@ class InstantaneousHeartRate:
         # 瞬間心拍数を計算
         instantaneous_hr = 60000.0 / beat.rr_interval_ms
         
-        # データを追加
-        self._instantaneous_hr_data.append((beat.timestamp_ns, instantaneous_hr))
+        # フィルタリング処理
+        if self._should_accept_data(instantaneous_hr):
+            # 有効なデータのみを追加
+            self._instantaneous_hr_data.append((beat.timestamp_ns, instantaneous_hr))
+            
+            # メモリ管理: 古いデータを削除
+            if len(self._instantaneous_hr_data) > self._max_data_points:
+                self._instantaneous_hr_data = self._instantaneous_hr_data[-self._max_data_points//2:]
+        else:
+            logger.debug(f"Filtered out 1 instantaneous HR at {beat.timestamp_ns}ns")
+    
+    def _should_accept_data(self, instantaneous_hr: float) -> bool:
+        """
+        瞬間心拍数データがフィルタリング基準を満たすか判定
         
-        # メモリ管理: 古いデータを削除
-        if len(self._instantaneous_hr_data) > self._max_data_points:
-            self._instantaneous_hr_data = self._instantaneous_hr_data[-self._max_data_points//2:]
+        Args:
+            instantaneous_hr (float): 判定対象の瞬間心拍数（BPM）
+            
+        Returns:
+            bool: True=有効データ、False=ゴミデータ
+        """
+        # 初回データは常に有効
+        if not self._instantaneous_hr_data:
+            return True
+        
+        # 直前の有効な瞬間心拍数を取得
+        last_valid_hr = self._instantaneous_hr_data[-1][1]
+        
+        # 差分を計算
+        difference = abs(instantaneous_hr - last_valid_hr)
+        
+        # 閾値以内であれば有効
+        return difference < self.filter_threshold_bpm
     
     def get_instantaneous_hr(self) -> List[Tuple[int, float]]:
         """
