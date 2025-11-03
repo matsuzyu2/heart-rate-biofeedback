@@ -85,7 +85,7 @@ class InstantaneousHeartRate:
             instantaneous_hr (float): 判定対象の瞬間心拍数（BPM）
             
         Returns:
-            bool: True=有効データ、False=ゴミデータ
+            bool: True=有効データ、False=無効データ
         """
         # 初回データは常に有効
         if not self._instantaneous_hr_data:
