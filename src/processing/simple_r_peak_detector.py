@@ -143,7 +143,7 @@ class SimpleRPeakDetector:
         
         # 2次微分を計算（2階差分）
         if len(self.signal_buffer) >= 3:
-            second_deriv = (current_sample - 2 * self.signal_buffer[-2] + self.signal_buffer[-3])
+            second_deriv = current_sample - 2 * self.signal_buffer[-2] + self.signal_buffer[-3]
             self.second_derivative_buffer.append(second_deriv)
     
     def _update_derivative_threshold(self):

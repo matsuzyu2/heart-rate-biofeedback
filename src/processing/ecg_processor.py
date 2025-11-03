@@ -186,29 +186,6 @@ class ECGProcessor:
         
         return summary
     
-    def get_heart_rate_bpm(self, window_duration_ms: Optional[int] = None) -> Optional[float]:
-        """
-        現在の心拍数を取得（InstantaneousHeartRateベース）
-        
-        Args:
-            window_duration_ms (Optional[int]): 計算窓の時間幅（ミリ秒）、Noneの場合は設定ファイルから取得
-            
-        Returns:
-            Optional[float]: 心拍数（BPM）、計算できない場合はNone
-        """
-        # 時間窓を決定（設定ファイルからデフォルト値を取得）
-        if window_duration_ms is None:
-            window_duration_s = HR_BLOCK_WINDOW_SECONDS
-        else:
-            window_duration_s = window_duration_ms / 1000.0
-        
-        # ブロック平均を取得
-        block_averages = self.instantaneous_hr.get_block_averages(window_seconds=window_duration_s)
-        
-        # 最新のブロック平均を返す
-        latest_block = block_averages[-1]
-        return latest_block["average_hr"]
-    
     def get_heart_rate_trend(self, timestamp_ns: Optional[int] = None) -> TrendType:
         """
         心拍数のトレンド判定を取得（リアルタイム対応）
@@ -263,18 +240,19 @@ class ECGProcessor:
         """
         return self.r_peak_detector.detected_peaks
     
-    def reset_r_peak_detector(self):
-        """R波検出器と瞬間心拍数算出器の状態をリセット"""
-        self.r_peak_detector.reset()
-        self.instantaneous_hr.reset()
-        logger.info("R-peak detector and instantaneous heart rate calculator reset")
+    # 同一インスタンスで複数セッションを実行するよう修正する場合に備えて残す
+    # def reset_r_peak_detector(self):
+    #     """R波検出器と瞬間心拍数算出器の状態をリセット"""
+    #     self.r_peak_detector.reset()
+    #     self.instantaneous_hr.reset()
+    #     logger.info("R-peak detector and instantaneous heart rate calculator reset")
     
-    def clear_data(self):
-        """保存されているECGデータをクリア"""
-        self.ecg_data_list.clear()
+    # def clear_data(self):
+    #     """保存されているECGデータをクリア"""
+    #     self.ecg_data_list.clear()
         
-        # R波検出器と瞬間心拍数算出器もリセット
-        self.r_peak_detector.reset()
-        self.instantaneous_hr.reset()
+    #     # R波検出器と瞬間心拍数算出器もリセット
+    #     self.r_peak_detector.reset()
+    #     self.instantaneous_hr.reset()
         
-        logger.info("ECG data, R-peak detector, and instantaneous heart rate calculator cleared")
+    #     logger.info("ECG data, R-peak detector, and instantaneous heart rate calculator cleared")
