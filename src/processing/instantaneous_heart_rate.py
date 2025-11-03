@@ -75,7 +75,7 @@ class InstantaneousHeartRate:
             if len(self._instantaneous_hr_data) > self._max_data_points:
                 self._instantaneous_hr_data = self._instantaneous_hr_data[-self._max_data_points//2:]
         else:
-            logger.debug(f"Filtered out 1 instantaneous HR at {beat.timestamp_ns}ns")
+            logger.debug(f"Filtered out instantaneous HR at {beat.timestamp_ns}ns")
     
     def _should_accept_data(self, instantaneous_hr: float) -> bool:
         """
